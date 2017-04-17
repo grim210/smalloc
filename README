@@ -1,0 +1,13 @@
+smalloc is small memory allocator for UNIX-like systems.  Its intended use is
+to be embedded in other projects when the default memory allocator by the
+operating system isn't up to the challange.
+
+To use, you really only need to put the smalloc.c source file in your
+project's source directory and the smalloc.h in your project's include
+directory.  The CMake build system is there to assist in keeping smalloc's
+test modules organized.
+
+I'd love feedback!  And pull requests are even better.  Also, feel free to
+open issues on the issue tracker.  This project has been released to the
+public domain (see the LICENSE file), so feel free to use this code however
+you like.
