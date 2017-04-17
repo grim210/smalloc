@@ -1,1 +1,11 @@
+# Ignore the CMake build directory.
 build
+
+# Ignore editor artifacts
+*swp
+*~
+
+# Ignore binary objects
+*.o
+*.so
+*.a
