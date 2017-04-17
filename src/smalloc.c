@@ -146,7 +146,7 @@ void* _smalloc_osalloc(size_t len)
 #endif
 
 #ifdef _WIN32
-    ret = HeapAlloc(_info.heap_ptr, 0, len)
+    ret = HeapAlloc(_info.heap_ptr, 0, len);
 #else
     ret = mmap(NULL, len, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
