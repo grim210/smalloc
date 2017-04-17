@@ -134,16 +134,10 @@ void* _smalloc_osalloc(size_t len)
 
     if (len % _info.pagesize != 0) {
 #ifdef SMALLOC_DEBUG
-        fprintf(stderr, "ERROR: osalloc: must allocate in multiples of %ld.",
-            _info.pagesize);
-        fprintf(stderr, "Requested %u.\n", len);
+        fprintf(stderr, "ERROR: osalloc: invalid size request: %u\n", len);
 #endif
         return NULL;
     }
-
-#ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: Requested %lu bytes of memory.\n", len);
-#endif
 
 #ifdef _WIN32
     ret = HeapAlloc(_info.heap_ptr, 0, len);
@@ -151,12 +145,6 @@ void* _smalloc_osalloc(size_t len)
     ret = mmap(NULL, len, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #endif
-
-    if (ret == NULL) {
-#ifdef SMALLOC_DEBUG
-        fprintf(stderr, "ERROR: osalloc: failed to allocate memory.\n");
-#endif
-    }
 
     return ret;
 }
