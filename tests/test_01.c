@@ -15,7 +15,7 @@ int main(int argc, char* argv[])
         len = (REQUEST_SIZE * (i + 1));
         ptrs[i] = smalloc(len);
         if (ptrs[i]) {
-            fprintf(stdout, "Allocated %d bytes of memory!\n", len);
+            fprintf(stdout, "Allocated %lu bytes of memory!\n", len);
         } else {
             fprintf(stderr, "TEST FAILED TO ALLOCATE MEMORY!\n");
         }

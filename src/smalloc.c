@@ -23,6 +23,8 @@ struct _smalloc_chunk_t {
 * This structure represents a group of pages that the allocator can
 * allocate smaller chunks from.
 *
+* hits - how many times the requested chunk has been found in this group.
+*     Useful for optimizing searches. TODO for later.
 * npages - The number of pages allocated for this group.  This data
 *     structure occupies the first few pages of that group of pages.
 * lenbytes - The number of bytes in this page group, minus the space
@@ -39,6 +41,7 @@ struct _smalloc_chunk_t {
 *
 */
 struct _smalloc_pagegroup_t {
+    unsigned hits;
     size_t npages;
     size_t lenbytes;
     size_t bytesfree;
@@ -79,6 +82,8 @@ static struct _smalloc_info {
 void* _pgroup_alloc(size_t count);
 int   _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
 int   _pgroup_cleanup(struct _smalloc_pagegroup_t* list);
+
+int _smalloc_init_(size_t initial);
 
 int _smalloc_append(struct _smalloc_block_t* list, void* block);
 int _smalloc_clean(struct _smalloc_block_t* list);
@@ -136,6 +141,22 @@ void *smalloc(size_t size)
     }
 
     return (mem + sizeof(struct _smalloc_block_t));
+}
+
+int _smalloc_init_(size_t initial)
+{
+    /* Determine the page size of the underlying OS */
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    _info.pagesize = si.dwPageSize;
+    _info.heap_ptr = GetProcessHeap();
+#else
+    _info.pagesize = sysconf(_SC_PAGESIZE);
+#endif
+
+    _info.ready = 1;
+    return 0;
 }
 
 int _smalloc_append(struct _smalloc_block_t* list, void* block)
@@ -210,8 +231,12 @@ _pgroup_alloc(size_t count)
     void* ret = NULL;
     size_t len = count * _info.pagesize;
 
+#ifdef _WIN32
+    ret = HeapAlloc(_info.heap_ptr, 0, len);
+#else
     ret = mmap(0, len, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0L);
+#endif
 
 #ifdef SMALLOC_DEBUG
     fprintf(stdout, "INFO: _pgroup_alloc: requested %lu bytes.\n", len);
