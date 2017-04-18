@@ -9,11 +9,20 @@
 * Enough memory will be used to fulfill the request, plus store the
 * metadata in the _smalloc_chunk_t structure as well.
 *
+* ptr - the memory handed off to the function calling malloc(3)
+* len - the length of the memory pointed to by 'ptr'
+* freed - initially set to 0, but after the user calls free(3) with
+*     ptr, freed will be set to 1.  And the allocator can then do what
+*     it wants with this chunk of memory.
+* next - the next chunk.  This is a list whose limit is the number of
+*     allocations that can fit within a page group.
+*
 * |---------------------- total chunk memory ---------------------------|
 * |-- chunk metadata ---|------------------ user memory ----------------|
 *
 */
 struct _smalloc_chunk_t {
+    void *ptr;
     size_t len;
     unsigned freed;
     struct _smalloc_chunk_t* next;
@@ -25,6 +34,7 @@ struct _smalloc_chunk_t {
 *
 * hits - how many times the requested chunk has been found in this group.
 *     Useful for optimizing searches. TODO for later.
+* top - The start of the memory available for 'chunking'.
 * npages - The number of pages allocated for this group.  This data
 *     structure occupies the first few pages of that group of pages.
 * lenbytes - The number of bytes in this page group, minus the space
@@ -42,6 +52,7 @@ struct _smalloc_chunk_t {
 */
 struct _smalloc_pagegroup_t {
     unsigned hits;
+    void* top;
     size_t npages;
     size_t lenbytes;
     size_t bytesfree;
@@ -79,11 +90,11 @@ static struct _smalloc_info {
 /*
 * Private function prototypes for page group management.
 */
-void* _pgroup_alloc(size_t count);
+void* _pgroup_alloc(size_t pcount);
 int   _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
 int   _pgroup_cleanup(struct _smalloc_pagegroup_t* list);
 
-int _smalloc_init_(size_t initial);
+int   _smalloc_init_(size_t initial);
 
 int _smalloc_append(struct _smalloc_block_t* list, void* block);
 int _smalloc_clean(struct _smalloc_block_t* list);
@@ -145,6 +156,14 @@ void *smalloc(size_t size)
 
 int _smalloc_init_(size_t initial)
 {
+    void* start;
+    size_t result;
+    size_t adjusted;
+    struct _smalloc_pagegroup_t *pg;
+
+    size_t chunk_size;
+    struct _smalloc_chunk_t *chk;
+
     /* Determine the page size of the underlying OS */
 #ifdef _WIN32
     SYSTEM_INFO si;
@@ -154,6 +173,58 @@ int _smalloc_init_(size_t initial)
 #else
     _info.pagesize = sysconf(_SC_PAGESIZE);
 #endif
+
+    /*
+    * initial, the function parameter, is what's required by the program
+    * requesting memory.  We need to take the metadata required to store
+    * that information when making our intial allocation from the OS.
+    * Otherwise we will return a void* that is not large enough for the
+    * calling function to store its data.
+    */
+    adjusted = initial + sizeof(struct _smalloc_pagegroup_t) +
+        sizeof(struct _smalloc_chunk_t);
+
+    if (adjusted < SMALLOC_SMALLEST_PAGE_GROUP * _info.pagesize) {
+        result = SMALLOC_SMALLEST_PAGE_GROUP;
+    } else {
+        result = SMALLOC_SMALLEST_PAGE_GROUP;
+        while (result * _info.pagesize < adjusted) {
+            result++;
+        }
+    }
+
+#ifdef SMALLOC_DEBUG
+    fprintf(stdout, "INFO: Requesting %lu pages from the OS.\n", result);
+#endif
+
+    start = _pgroup_alloc(result);
+    if (!start) {
+#ifdef SMALLOC_DEBUG
+        fprintf(stderr, "ERROR: Failed to allocate %lu pages.\n", result);
+#endif
+        return -1;
+    }
+
+    pg = (struct _smalloc_pagegroup_t*)start;
+    pg->top = start + sizeof(struct _smalloc_pagegroup_t);
+    pg->hits = 0;
+    pg->npages = result;
+    pg->lenbytes = (pg->npages * _info.pagesize) -
+        sizeof(struct _smalloc_pagegroup_t);
+    pg->bytesfree = pg->lenbytes;
+    pg->maxfree = pg->lenbytes;
+    pg->chunks = NULL;
+    pg->next = NULL;
+
+    chunk_size = initial + sizeof(struct _smalloc_chunk_t);
+
+    chk = (struct _smalloc_chunk_t*)pg->top;
+    chk->len = initial;
+    chk->freed = 0;
+    chk->ptr = chk + sizeof(struct _smalloc_chunk_t);
+    chk->next = NULL;
+
+    pg->top += chunk_size;
 
     _info.ready = 1;
     return 0;
@@ -226,10 +297,10 @@ void* _smalloc_osalloc(size_t len)
 }
 
 void*
-_pgroup_alloc(size_t count)
+_pgroup_alloc(size_t pcount)
 {
     void* ret = NULL;
-    size_t len = count * _info.pagesize;
+    size_t len = pcount * _info.pagesize;
 
 #ifdef _WIN32
     ret = HeapAlloc(_info.heap_ptr, 0, len);

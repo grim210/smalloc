@@ -18,6 +18,7 @@ int main(int argc, char* argv[])
             fprintf(stdout, "Allocated %lu bytes of memory!\n", len);
         } else {
             fprintf(stderr, "TEST FAILED TO ALLOCATE MEMORY!\n");
+            return -1;
         }
     }
 
