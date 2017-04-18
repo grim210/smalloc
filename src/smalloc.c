@@ -154,6 +154,26 @@ void *smalloc(size_t size)
     return (mem + sizeof(struct _smalloc_block_t));
 }
 
+void *smalloc2(size_t size)
+{
+    int result;
+
+    if (!_info.ready) {
+        result = _smalloc_init_(size);
+        if (result) {
+#ifdef SMALLOC_DEBUG
+            fprintf(stderr, "ERROR: failed to initialize smalloc\n");
+#endif
+            return NULL;
+
+        }
+
+        return _info.pglist->chunks->ptr;
+    }
+
+    return NULL;
+}
+
 int _smalloc_init_(size_t initial)
 {
     void* start;
@@ -225,6 +245,8 @@ int _smalloc_init_(size_t initial)
     chk->next = NULL;
 
     pg->top += chunk_size;
+    pg->chunks = chk;
+    _info.pglist = pg;
 
     _info.ready = 1;
     return 0;
