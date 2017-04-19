@@ -32,8 +32,6 @@ struct _smalloc_chunk_t {
 * This structure represents a group of pages that the allocator can
 * allocate smaller chunks from.
 *
-* hits - how many times the requested chunk has been found in this group.
-*     Useful for optimizing searches. TODO for later.
 * top - The start of the memory available for 'chunking'.
 * npages - The number of pages allocated for this group.  This data
 *     structure occupies the first few pages of that group of pages.
@@ -51,7 +49,6 @@ struct _smalloc_chunk_t {
 *
 */
 struct _smalloc_pagegroup_t {
-    unsigned hits;
     void* top;
     size_t npages;
     size_t lenbytes;
@@ -227,7 +224,6 @@ int _smalloc_init_(size_t initial)
 
     pg = (struct _smalloc_pagegroup_t*)start;
     pg->top = start + sizeof(struct _smalloc_pagegroup_t);
-    pg->hits = 0;
     pg->npages = result;
     pg->lenbytes = (pg->npages * _info.pagesize) -
         sizeof(struct _smalloc_pagegroup_t);
