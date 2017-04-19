@@ -87,9 +87,48 @@ static struct _smalloc_info {
 /*
 * Private function prototypes for page group management.
 */
-void* _pgroup_alloc(size_t pcount);
+
+/*
+* _pages_alloc:
+* This function calls the underlying OS memory allocation routines to
+* reserve pages for the allocator.
+*
+* pcount - number of pages to allocate.  This size can be determined
+*     the _info structure for pagesize, which is set during initialization.
+*
+* returns a void* to the pages that were allocated.
+*/
+void* _pages_alloc(size_t pcount);
+
+/*
+* _pgroup_append:
+* This takes a group of pages, taken from _pages_alloc, and attaches
+* it to the end of the pagegroup list.  All the pagegroup metadata is
+* initialized before it is appended.
+*
+* list - list of pagegroups that have already been reserved by the
+*     allocator.  The head node for this list is found in '_info'.
+* block - block of memory to append to the end of the list.  The function
+*     calls for a void pointer, but the memory can be of type void* or
+*     of type pagegroup_t*.
+*
+* returns 0 on success, less than 0 on failure.
+*/
 int   _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
+
+/*
+* _pgroup_cleanup:
+* This function traverses the entire list and looks for page groups that
+* have no memory in use and releases them back to the OS.
+*
+* list - the pagegroup list to be pruned of free page groups.
+*
+* returns 0 on success, less than 0 on failure.
+*/
 int   _pgroup_cleanup(struct _smalloc_pagegroup_t* list);
+
+int   _pgroup_fits(struct _smalloc_pagegroup_t* pg, size_t size);
+void* _pgroup_reserve(struct _smalloc_pagegroup_t* pg, size_t size);
 
 int   _smalloc_init_(size_t initial);
 
@@ -214,7 +253,7 @@ int _smalloc_init_(size_t initial)
     fprintf(stdout, "INFO: Requesting %lu pages from the OS.\n", result);
 #endif
 
-    start = _pgroup_alloc(result);
+    start = _pages_alloc(result);
     if (!start) {
 #ifdef SMALLOC_DEBUG
         fprintf(stderr, "ERROR: Failed to allocate %lu pages.\n", result);
@@ -315,7 +354,7 @@ void* _smalloc_osalloc(size_t len)
 }
 
 void*
-_pgroup_alloc(size_t pcount)
+_pages_alloc(size_t pcount)
 {
     void* ret = NULL;
     size_t len = pcount * _info.pagesize;
