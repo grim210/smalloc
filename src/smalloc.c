@@ -90,12 +90,18 @@ static struct _smalloc_info {
 * This function calls the underlying OS memory allocation routines to
 * reserve pages for the allocator.
 *
-* pcount - number of pages to allocate.  This size can be determined
-*     the _info structure for pagesize, which is set during initialization.
+* size - number of bytes that are required to allocate to the program.
+* pcount - number of pages to allocate to fulfill the request.  If a value
+*     of zero is provided, the function will make its best guess to fulfill
+*     the 'size' requirement.  Extra pages may be requested regardless if
+*     those pages will not be needed to meet the size required.  If pcount
+*     is less than the minimum amount of pages required to fulfill the size
+*     requirement, the minimum number of pages required to fulfill the
+*     request will be allocated.
 *
-* returns a void* to the pages that were allocated.
+* returns a page group that was allocated.
 */
-void* _pages_alloc(size_t pcount);
+struct _smalloc_pagegroup_t* _pages_alloc(size_t size, size_t pcount);
 
 /*
 * _pgroup_append:
@@ -243,9 +249,6 @@ void *smalloc2(size_t size)
 
 int _smalloc_init_(size_t initial)
 {
-    void* start;
-    size_t result;
-    size_t adjusted;
     struct _smalloc_pagegroup_t *pg;
 
     size_t chunk_size;
@@ -261,46 +264,14 @@ int _smalloc_init_(size_t initial)
     _info.pagesize = sysconf(_SC_PAGESIZE);
 #endif
 
-    /*
-    * initial, the function parameter, is what's required by the program
-    * requesting memory.  We need to take the metadata required to store
-    * that information when making our intial allocation from the OS.
-    * Otherwise we will return a void* that is not large enough for the
-    * calling function to store its data.
-    */
-    adjusted = initial + sizeof(struct _smalloc_pagegroup_t) +
-        sizeof(struct _smalloc_chunk_t);
-
-    if (adjusted < SMALLOC_SMALLEST_PAGE_GROUP * _info.pagesize) {
-        result = SMALLOC_SMALLEST_PAGE_GROUP;
-    } else {
-        result = SMALLOC_SMALLEST_PAGE_GROUP;
-        while (result * _info.pagesize < adjusted) {
-            result++;
-        }
-    }
-
-#ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: _smalloc_init: Requesting %lu page(s) from the "
-        "OS.\n", result);
-#endif
-
-    start = _pages_alloc(result);
-    if (!start) {
+    pg = _pages_alloc(initial, SMALLOC_SMALLEST_PAGE_GROUP);
+    if (!pg) {
 #ifdef SMALLOC_DEBUG
         fprintf(stderr, "ERROR: _smalloc_init: Failed to allocate "
-            "%lu pages.\n", result);
+            "%lu bytes.\n", initial);
 #endif
         return -1;
     }
-
-    pg = (struct _smalloc_pagegroup_t*)start;
-    pg->top = start + sizeof(struct _smalloc_pagegroup_t);
-    pg->npages = result;
-    pg->bytesfree = (pg->npages * _info.pagesize) -
-        sizeof(struct _smalloc_pagegroup_t);
-    pg->chunks = NULL;
-    pg->next = NULL;
 
 #ifdef SMALLOC_DEBUG
     fprintf(stdout, "INFO: _smalloc_init: %lu bytes free in allocated "
@@ -389,11 +360,46 @@ void* _smalloc_osalloc(size_t len)
     return ret;
 }
 
-void*
-_pages_alloc(size_t pcount)
+struct _smalloc_pagegroup_t*
+_pages_alloc(size_t size, size_t pcount)
 {
     void* ret = NULL;
     size_t len = pcount * _info.pagesize;
+    size_t adjusted;
+    size_t npages;
+    struct _smalloc_pagegroup_t* pg;
+
+
+    /*
+    * 'adjusted' is how much memory will actually
+    * be required to fulfill the size request.
+    */
+    adjusted = size + sizeof(struct _smalloc_pagegroup_t) +
+        sizeof(struct _smalloc_chunk_t);
+
+    /*
+    * If the page count requested will fit all of
+    * the adjusted size, no need to do more math.
+    *
+    * Otherwise, we need to figure out how many
+    * pages it will take to fit all of size.
+    */
+    npages = 0;
+    if (pcount * _info.pagesize >= adjusted) {
+        len = pcount * _info.pagesize;
+        npages = pcount;
+    } else {
+        len = _info.pagesize * (adjusted / _info.pagesize);
+        len += _info.pagesize;
+        npages = len / _info.pagesize;
+    }
+
+#ifdef SMALLOC_DEBUG
+    if (len % _info.pagesize != 0) {
+        fprintf(stderr, "ERROR: _pages_alloc: attempting improper page "
+            "alignment for mmap(2)\n");
+    }
+#endif
 
 #ifdef _WIN32
     ret = HeapAlloc(_info.heap_ptr, 0, len);
@@ -403,13 +409,22 @@ _pages_alloc(size_t pcount)
 #endif
 
 #ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: _pgroup_alloc: requested %lu bytes.\n", len);
+    fprintf(stdout, "INFO: _pgroup_alloc: requested %lu bytes, %lu pages\n",
+        len, len / _info.pagesize);
     if (!ret) {
         fprintf(stderr, "ERROR: failed to allocate page group.\n");
     }
 #endif
 
-    return ret;
+    pg = (struct _smalloc_pagegroup_t*)ret;
+    pg->top = ret + sizeof(struct _smalloc_pagegroup_t);
+    pg->npages = npages;
+    pg->bytesfree = (pg->npages * _info.pagesize) -
+        sizeof(struct _smalloc_pagegroup_t);
+    pg->chunks = NULL;
+    pg->next = NULL;
+
+    return pg;
 }
 
 int
