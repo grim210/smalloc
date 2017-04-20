@@ -39,8 +39,6 @@ struct _smalloc_chunk_t {
 *     taken by this structure.
 * bytesfree - The total number of bytes free that can be allocated to
 *     a calling function.
-* maxfree - The largest piece of unfragmented memory.  Useful for quickly
-*     determine if a page group can support a memory allocation request.
 * chunks - a singly linked list of the allocated chunks in this page group.
 * next - the next page group.
 *
@@ -53,7 +51,6 @@ struct _smalloc_pagegroup_t {
     size_t npages;
     size_t lenbytes;
     size_t bytesfree;
-    size_t maxfree;
     struct _smalloc_chunk_t* chunks;
     struct _smalloc_pagegroup_t* next;
 };
@@ -193,6 +190,8 @@ void *smalloc(size_t size)
 void *smalloc2(size_t size)
 {
     int result;
+    void* mem;
+    struct _smalloc_pagegroup_t* pg;
 
     if (!_info.ready) {
         result = _smalloc_init_(size);
@@ -207,7 +206,39 @@ void *smalloc2(size_t size)
         return _info.pglist->chunks->ptr;
     }
 
-    return NULL;
+    pg = _info.pglist;
+    while (pg && !_pgroup_fits(pg, size)) {
+        pg = pg->next;
+    }
+
+    /* XXX:
+    * For now I'm going to leave this for later.  If we end up with a null
+    * pointer, it means that the above while loop was not able to find
+    * memory available in the page group list to support the malloc(3)
+    * request.  Another group of pages will need to be allocated to support
+    * the request from here.
+    *
+    * The intelligent thing to do is to create another page group and set
+    * the pg variable to the new page group.
+    */
+    if (!pg) {
+#ifdef SMALLOC_DEBUG
+        fprintf(stderr, "TODO: Allocate a new page group in the event that"
+            " we run out of memory in the current page group.\n");
+#endif
+        return NULL;
+    }
+
+    mem = _pgroup_reserve(pg, size);
+
+#ifdef SMALLOC_DEBUG
+    if (mem == NULL) {
+        fprintf(stderr, "ERROR: smalloc: failed to reserve a chunk of "
+            "memory of size %lu\n", size);
+    }
+#endif
+
+    return mem;
 }
 
 int _smalloc_init_(size_t initial)
@@ -250,13 +281,15 @@ int _smalloc_init_(size_t initial)
     }
 
 #ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: Requesting %lu pages from the OS.\n", result);
+    fprintf(stdout, "INFO: _smalloc_init: Requesting %lu page(s) from the "
+        "OS.\n", result);
 #endif
 
     start = _pages_alloc(result);
     if (!start) {
 #ifdef SMALLOC_DEBUG
-        fprintf(stderr, "ERROR: Failed to allocate %lu pages.\n", result);
+        fprintf(stderr, "ERROR: _smalloc_init: Failed to allocate "
+            "%lu pages.\n", result);
 #endif
         return -1;
     }
@@ -264,12 +297,15 @@ int _smalloc_init_(size_t initial)
     pg = (struct _smalloc_pagegroup_t*)start;
     pg->top = start + sizeof(struct _smalloc_pagegroup_t);
     pg->npages = result;
-    pg->lenbytes = (pg->npages * _info.pagesize) -
+    pg->bytesfree = (pg->npages * _info.pagesize) -
         sizeof(struct _smalloc_pagegroup_t);
-    pg->bytesfree = pg->lenbytes;
-    pg->maxfree = pg->lenbytes;
     pg->chunks = NULL;
     pg->next = NULL;
+
+#ifdef SMALLOC_DEBUG
+    fprintf(stdout, "INFO: _smalloc_init: %lu bytes free in allocated "
+        "page group.\n", pg->bytesfree);
+#endif
 
     chunk_size = initial + sizeof(struct _smalloc_chunk_t);
 
@@ -388,7 +424,52 @@ _pgroup_append(struct _smalloc_pagegroup_t* list, void* block)
 }
 
 int
+_pgroup_fits(struct _smalloc_pagegroup_t* pg, size_t size)
+{
+    /* we have to ensure we save space for the metadata when looking */
+    if (pg->bytesfree >= (size + sizeof(struct _smalloc_chunk_t))) {
+        return 1;
+    }
+
+    return 0;
+}
+
+int
 _pgroup_cleanup(struct _smalloc_pagegroup_t* list)
 {
     return -1;
+}
+
+void*
+_pgroup_reserve(struct _smalloc_pagegroup_t* pg, size_t size)
+{
+    struct _smalloc_chunk_t* chunk;
+    struct _smalloc_chunk_t* clist;
+
+    chunk = (struct _smalloc_chunk_t*)pg->top;
+    pg->top += (size + sizeof(struct _smalloc_chunk_t));
+    pg->bytesfree -= (size + sizeof(struct _smalloc_chunk_t));
+
+#ifdef SMALLOC_DEBUG
+    fprintf(stdout, "INFO: _pgroup_reserve: %lu bytes free in current "
+        " page group.\n", pg->bytesfree);
+#endif
+
+    chunk->ptr = (chunk + sizeof(struct _smalloc_chunk_t));
+    chunk->len = size;
+    chunk->freed = 0;
+    chunk->next = NULL;
+
+    /*
+    * Don't forget to modify the linked list of chunks so that
+    * we don't lose track of memory that we've allocated out.
+    */
+    clist = pg->chunks;
+    while (clist->next) {
+        clist = clist->next;
+    }
+
+    clist->next = chunk;
+
+    return chunk->ptr;
 }

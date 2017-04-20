@@ -1,26 +1,26 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "smalloc.h"
 
-#define SMALLOC_COUNT       (30)
-#define REQUEST_SIZE        (200)
+#define TEST_MEMORY_AMOUNT      (489)
 
 int main(int argc, char* argv[])
 {
-    int i;
-    void* ptrs[SMALLOC_COUNT];
-    size_t len;
+    char* tmp1 = (char*)smalloc2(TEST_MEMORY_AMOUNT);
+    char* tmp2 = (char*)smalloc2(TEST_MEMORY_AMOUNT);
 
-    for (i = 0; i < SMALLOC_COUNT; i++) {
-        len = (REQUEST_SIZE * (i + 1));
-        ptrs[i] = smalloc(len);
-        if (ptrs[i]) {
-            fprintf(stdout, "Allocated %lu bytes of memory!\n", len);
-        } else {
-            fprintf(stderr, "TEST FAILED TO ALLOCATE MEMORY!\n");
-            return -1;
-        }
+    if (tmp1 == NULL || tmp2 == NULL) {
+        fprintf(stdout, "Failed to allocated memory!\n");
+        return -1;
     }
+
+    /* fill the buffer...just for fun. */
+    memset(tmp1, 0x05, TEST_MEMORY_AMOUNT);
+    memset(tmp2, 0x07, TEST_MEMORY_AMOUNT);
+
+    fprintf(stdout, "%p\n", tmp1);
+    fprintf(stdout, "%p\n", tmp2);
 
     return 0;
 }
