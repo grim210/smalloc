@@ -111,7 +111,7 @@ struct _smalloc_pagegroup_t* _pages_alloc(size_t size, size_t pcount);
 *
 * returns 0 on success, less than 0 on failure.
 */
-int   _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
+int _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
 
 /*
 * _pgroup_cleanup:
@@ -122,11 +122,35 @@ int   _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
 *
 * returns 0 on success, less than 0 on failure.
 */
-int   _pgroup_cleanup(struct _smalloc_pagegroup_t* list);
+int _pgroup_cleanup(struct _smalloc_pagegroup_t* list);
 
-int   _pgroup_fits(struct _smalloc_pagegroup_t* pg, size_t size);
+/*
+* _pgroup_fits:
+* This function queries a particular page group to determine if the
+* page group 'pg' can support a chunk allocation of 'size' bytes.
+*
+* pg - the page group to query.
+* size - the size that needs to be supported by the allocation.  This
+*     function does the math for calcuating chunk metadata plus size.
+*
+* returns a number greater than zero if the allocation is supported, but
+*     zero is returned if the allocation cannot be supported in this group.
+*/
+int _pgroup_fits(struct _smalloc_pagegroup_t* pg, size_t size);
 
-struct _smalloc_chunk_t*  _pgroup_reserve(struct _smalloc_pagegroup_t* pg,
+/*
+* _pgroup_reserve:
+* Reserves a chunk in the pagegroup 'pg' of 'size' bytes.  When the chunk
+* is allocated, it is not initialized.  However, the chunk *will* be added
+* to the page group's list of chunks.
+*
+* pg - the page group to reserve the chunk from
+* size - the number of bytes that needs to be supported.  This size, plus
+*     the size of the chunk structure will be reserved in the page group.
+*
+* returns a chunk of size + sizeof(chunk_t) bytes.  Or NULL on failure.
+*/
+struct _smalloc_chunk_t* _pgroup_reserve(struct _smalloc_pagegroup_t* pg,
     size_t size);
 
 int _smalloc_init(void);
