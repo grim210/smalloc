@@ -15,7 +15,7 @@ int main(int argc, char* argv[])
     for (i = 0; i < SMALLOC_COUNT; i++) {
         len = (REQUEST_SIZE * (i + 1));
         accumulator += len;
-        ptrs[i] = smalloc2(len);
+        ptrs[i] = smalloc(len);
 
         if (ptrs[i]) {
             fprintf(stdout, "Allocated %lu bytes of memory! Total: %lu "

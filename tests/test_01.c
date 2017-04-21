@@ -7,8 +7,8 @@
 
 int main(int argc, char* argv[])
 {
-    char* tmp1 = (char*)smalloc2(TEST_MEMORY_AMOUNT);
-    char* tmp2 = (char*)smalloc2(TEST_MEMORY_AMOUNT);
+    char* tmp1 = (char*)smalloc(TEST_MEMORY_AMOUNT);
+    char* tmp2 = (char*)smalloc(TEST_MEMORY_AMOUNT);
 
     if (tmp1 == NULL || tmp2 == NULL) {
         fprintf(stdout, "Failed to allocated memory!\n");

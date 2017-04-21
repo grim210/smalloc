@@ -1,6 +1,7 @@
 #include "smalloc.h"
 
 #ifdef SMALLOC_DEBUG
+  #include <assert.h>
   #include <stdio.h>
 #endif
 
@@ -62,19 +63,12 @@ struct _smalloc_pagegroup_t {
 * will spend less time hunting for page groups to fulfill a request.
 */
 #ifndef SMALLOC_SMALLEST_PAGE_GROUP
-#define SMALLOC_SMALLEST_PAGE_GROUP     (1)
+#define SMALLOC_SMALLEST_PAGE_GROUP     (8)
 #endif
-
-struct _smalloc_block_t {
-    size_t len;
-    unsigned freed;
-    struct _smalloc_block_t* next;
-};
 
 static struct _smalloc_info {
     int ready;
     size_t pagesize;
-    struct _smalloc_block_t head;
     struct _smalloc_pagegroup_t *pglist;
 #ifdef _WIN32
     HANDLE heap_ptr;
@@ -131,105 +125,69 @@ int   _pgroup_append(struct _smalloc_pagegroup_t* list, void* block);
 int   _pgroup_cleanup(struct _smalloc_pagegroup_t* list);
 
 int   _pgroup_fits(struct _smalloc_pagegroup_t* pg, size_t size);
-void* _pgroup_reserve(struct _smalloc_pagegroup_t* pg, size_t size);
 
-int   _smalloc_init_(size_t initial);
+struct _smalloc_chunk_t*  _pgroup_reserve(struct _smalloc_pagegroup_t* pg,
+    size_t size);
 
-int _smalloc_append(struct _smalloc_block_t* list, void* block);
-int _smalloc_clean(struct _smalloc_block_t* list);
-int _smalloc_free(struct _smalloc_block_t* list, void* block);
 int _smalloc_init(void);
-void* _smalloc_osalloc(size_t size);
 
+/*
+* Public functions exposed in smalloc.h
+*/
 void *smalloc(size_t size)
 {
-    int result;
-    void* mem = NULL;
-
-    struct _smalloc_block_t header;
-    struct _smalloc_block_t *ptr;
-
-    if (!_info.ready) {
-        result = _smalloc_init();
-        if (result) {
-#ifdef SMALLOC_DEBUG
-            fprintf(stderr, "ERROR: failed to initialize smalloc\n");
-#endif
-            return NULL;
-
-        }
-    }
-
-    header.len = size + sizeof(struct _smalloc_block_t);
-    header.freed = 0;
-    header.next = NULL;
-
-    result = header.len % _info.pagesize;
-    if (result) {
-        header.len += _info.pagesize - result;
-    }
-
-    mem = _smalloc_osalloc(header.len);
-    if (mem == NULL) {
-#ifdef SMALLOC_DEBUG
-        fprintf(stderr, "ERROR: call to _osalloc failed!\n");
-#endif
-        return NULL;
-    }
-
-    ptr = (struct _smalloc_block_t*)mem;
-    ptr->len = header.len;
-    ptr->freed = header.freed;
-    ptr->next = header.next;
-
-    result = _smalloc_append(&_info.head, mem);
-    if (result) {
-#ifdef SMALLOC_DEBUG
-        fprintf(stdout, "ERROR: Failed to append memory to list.\n");
-#endif
-        return NULL;
-    }
-
-    return (mem + sizeof(struct _smalloc_block_t));
-}
-
-void *smalloc2(size_t size)
-{
-    int result;
-    void* mem;
-    size_t chksize;
     struct _smalloc_chunk_t* chk;
     struct _smalloc_pagegroup_t* pg;
 
-    if (!_info.ready) {
-        result = _smalloc_init_(size);
-        if (result) {
+    /*
+    * If the structure has been initialized (most likely case), we
+    * look through the existing list of pages and see if we have any
+    * groups that can support the size request.
+    */
+
+#ifdef SMALLOC_DEBUG
+    fprintf(stdout, "INFO: smalloc: Asking for %lu bytes.\n", size);
+#endif
+
+    if (_info.ready) {
+        pg = _info.pglist;
+        while (pg && !_pgroup_fits(pg, size)) {
+            pg = pg->next;
+        }
+    } else {
+        if (_smalloc_init()) {
+#ifdef SMALLOC_DEBUG
+            fprintf(stderr, "ERROR: smalloc: Failed to initialization.\n");
+#endif
+            return NULL;
+        }
+        pg = _pages_alloc(size, SMALLOC_SMALLEST_PAGE_GROUP);
+        if (!pg) {
 #ifdef SMALLOC_DEBUG
             fprintf(stderr, "ERROR: failed to initialize smalloc\n");
 #endif
             return NULL;
 
         }
-
-        return _info.pglist->chunks->ptr;
+        _info.pglist = pg;
     }
 
-    pg = _info.pglist;
-    while (pg && !_pgroup_fits(pg, size)) {
-        pg = pg->next;
-    }
 
-    /* XXX:
-    * For now I'm going to leave this for later.  If we end up with a null
-    * pointer, it means that the above while loop was not able to find
-    * memory available in the page group list to support the malloc(3)
-    * request.  Another group of pages will need to be allocated to support
-    * the request from here.
-    *
-    * The intelligent thing to do is to create another page group and set
-    * the pg variable to the new page group.
+#ifdef SMALLOC_DEBUG
+    /* Sanity check to ensure the allocator was initialized. */
+    assert(_info.ready);
+#endif
+
+    /*
+    * If we weren't able to find a page group to support the
+    * memory request in the above while() loop, we must ask
+    * the OS for more pages with a call to _pages_alloc.
     */
     if (!pg) {
+#ifdef SMALLOC_DEBUG
+        fprintf(stdout, "INFO: smalloc: No page group was found "
+            "to support %lu bytes.\n", size);
+#endif
         pg = _pages_alloc(size, SMALLOC_SMALLEST_PAGE_GROUP);
         if (!pg) {
 #ifdef SMALLOC_DEBUG
@@ -239,142 +197,65 @@ void *smalloc2(size_t size)
             return NULL;
         }
 
-        chksize = size + sizeof(struct _smalloc_chunk_t);
-        chk = (struct _smalloc_chunk_t*)pg->top;
-        chk->len = size;
-        chk->freed = 0;
-        chk->ptr = chk + sizeof(struct _smalloc_chunk_t);
-        chk->next = NULL;
-
-        pg->top += chksize;
-        pg->chunks = chk;
-
+        /*
+        * Once the page group has been successfully allocated,
+        * ensure the reference to the group isn't left dangling.
+        * Append it to the list of pages in the _info structure.
+        */
         _pgroup_append(_info.pglist, pg);
     }
 
-    mem = _pgroup_reserve(pg, size);
 
+    if (pg == NULL) {
 #ifdef SMALLOC_DEBUG
-    if (mem == NULL) {
-        fprintf(stderr, "ERROR: smalloc: failed to reserve a chunk of "
-            "memory of size %lu\n", size);
-    }
+        fprintf(stderr, "ERROR: smalloc: Failed to find/allocate page "
+            "group.\n");
 #endif
+        return NULL;
+    }
 
-    return mem;
+    /*
+    * Ask for a chunk from the page group.  When we get the chunk, all
+    * the internal metadata will not be initialized.  Do that here.
+    */
+    chk = _pgroup_reserve(pg, size);
+    if (chk == NULL) {
+#ifdef SMALLOC_DEBUG
+        fprintf(stderr, "ERROR: smalloc: Failed to reserve chunk from "
+            "page group.\n");
+#endif
+        return NULL;
+    }
+
+    chk->ptr = chk + sizeof(struct _smalloc_chunk_t);
+    chk->len = size;
+    chk->freed = 0;
+
+    return chk->ptr;
 }
 
-int _smalloc_init_(size_t initial)
+int
+_smalloc_init(void)
 {
-    struct _smalloc_pagegroup_t *pg;
-
-    size_t chunk_size;
-    struct _smalloc_chunk_t *chk;
-
     /* Determine the page size of the underlying OS */
 #ifdef _WIN32
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     _info.pagesize = si.dwPageSize;
     _info.heap_ptr = GetProcessHeap();
-#else
-    _info.pagesize = sysconf(_SC_PAGESIZE);
-#endif
-
-    pg = _pages_alloc(initial, SMALLOC_SMALLEST_PAGE_GROUP);
-    if (!pg) {
+    if (_info.heap_ptr == NULL) {
 #ifdef SMALLOC_DEBUG
-        fprintf(stderr, "ERROR: _smalloc_init: Failed to allocate "
-            "%lu bytes.\n", initial);
+        fprintf(stderr, "ERROR: _smalloc_init: Failed to get heap pointer "
+            "from GetProcessHeap() call.\n");
 #endif
         return -1;
     }
-
-#ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: _smalloc_init: %lu bytes free in allocated "
-        "page group.\n", pg->bytesfree);
-#endif
-
-    chunk_size = initial + sizeof(struct _smalloc_chunk_t);
-
-    chk = (struct _smalloc_chunk_t*)pg->top;
-    chk->len = initial;
-    chk->freed = 0;
-    chk->ptr = chk + sizeof(struct _smalloc_chunk_t);
-    chk->next = NULL;
-
-    pg->top += chunk_size;
-    pg->chunks = chk;
-    _info.pglist = pg;
-
-    _info.ready = 1;
-    return 0;
-}
-
-int _smalloc_append(struct _smalloc_block_t* list, void* block)
-{
-    struct _smalloc_block_t header;
-    struct _smalloc_block_t *ptr;
-
-    ptr = (struct _smalloc_block_t*)block;
-    header.len = ptr->len;
-    header.freed = ptr->freed;
-    header.next = ptr->next;
-
-    /* memcpy(&header, block, sizeof(struct _smalloc_block_t)); */
-    if (header.next) {
-#ifdef SMALLOC_DEBUG
-        fprintf(stdout, "INFO: Traversing memory node...\n");
-#endif
-        return _smalloc_append(header.next, block);
-    }
-
-    header.next = block;
-#ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: Attaching memory to end of list.\n");
-#endif
-
-    return 0;
-}
-
-int _smalloc_init(void)
-{
-    /*
-    * Since we're going to attempt to be as effecient as possible,
-    * we have to ensure that we're allocating memory on page boundaries.
-    * Page faults and cache misses are things to be avoided.
-    */
-#ifdef _WIN32
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    _info.pagesize = si.dwPageSize;
-    _info.heap_ptr = GetProcessHeap();
 #else
     _info.pagesize = sysconf(_SC_PAGESIZE);
 #endif
-
     _info.ready = 1;
-#ifdef SMALLOC_DEBUG
-    fprintf(stdout, "INFO: initialized the allocator.\n");
-#endif
+
     return 0;
-}
-
-void* _smalloc_osalloc(size_t len)
-{
-    void* ret = NULL;
-    if (len % _info.pagesize != 0) {
-        return NULL;
-    }
-
-#ifdef _WIN32
-    ret = HeapAlloc(_info.heap_ptr, 0, len);
-#else
-    ret = mmap(NULL, len, PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-#endif
-
-    return ret;
 }
 
 struct _smalloc_pagegroup_t*
@@ -385,7 +266,6 @@ _pages_alloc(size_t size, size_t pcount)
     size_t adjusted;
     size_t npages;
     struct _smalloc_pagegroup_t* pg;
-
 
     /*
     * 'adjusted' is how much memory will actually
@@ -472,36 +352,41 @@ _pgroup_cleanup(struct _smalloc_pagegroup_t* list)
     return -1;
 }
 
-void*
+struct _smalloc_chunk_t*
 _pgroup_reserve(struct _smalloc_pagegroup_t* pg, size_t size)
 {
     struct _smalloc_chunk_t* chunk;
-    struct _smalloc_chunk_t* clist;
 
+    /* Sanity check. */
+    assert(pg && (size != 0));
+
+    /*
+    * Allocate the chunk, but let the calling function do
+    * the initalization and cleanup on the chunks behalf.
+    */
     chunk = (struct _smalloc_chunk_t*)pg->top;
+    chunk->next = NULL;
+
+    /*
+    * Make changes to our internal pagegroup structure to ensure accuracy.
+    */
     pg->top += (size + sizeof(struct _smalloc_chunk_t));
     pg->bytesfree -= (size + sizeof(struct _smalloc_chunk_t));
+
+    /* Append the newly allocated chunk to the group's chunk list. */
+    if (pg->chunks == NULL) {
+        pg->chunks = chunk;
+    } else {
+        while (pg->chunks->next != NULL) {
+            pg->chunks = pg->chunks->next;
+        }
+        pg->chunks->next = chunk;
+    }
 
 #ifdef SMALLOC_DEBUG
     fprintf(stdout, "INFO: _pgroup_reserve: %lu bytes free in current "
         " page group.\n", pg->bytesfree);
 #endif
 
-    chunk->ptr = (chunk + sizeof(struct _smalloc_chunk_t));
-    chunk->len = size;
-    chunk->freed = 0;
-    chunk->next = NULL;
-
-    /*
-    * Don't forget to modify the linked list of chunks so that
-    * we don't lose track of memory that we've allocated out.
-    */
-    clist = pg->chunks;
-    while (clist->next) {
-        clist = clist->next;
-    }
-
-    clist->next = chunk;
-
-    return chunk->ptr;
+    return chunk;
 }

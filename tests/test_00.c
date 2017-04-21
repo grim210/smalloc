@@ -11,7 +11,7 @@ int main(int argc, char* argv[])
     void* tmp = NULL;
     char* cast = NULL;
 
-    tmp = smalloc2(TEST_MEMORY_AMOUNT);
+    tmp = smalloc(TEST_MEMORY_AMOUNT);
     memset(tmp, 0x5A, TEST_MEMORY_AMOUNT);
 
     cast = (char*)tmp;
