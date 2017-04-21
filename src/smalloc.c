@@ -197,6 +197,8 @@ void *smalloc2(size_t size)
 {
     int result;
     void* mem;
+    size_t chksize;
+    struct _smalloc_chunk_t* chk;
     struct _smalloc_pagegroup_t* pg;
 
     if (!_info.ready) {
@@ -228,11 +230,26 @@ void *smalloc2(size_t size)
     * the pg variable to the new page group.
     */
     if (!pg) {
+        pg = _pages_alloc(size, SMALLOC_SMALLEST_PAGE_GROUP);
+        if (!pg) {
 #ifdef SMALLOC_DEBUG
-        fprintf(stderr, "TODO: Allocate a new page group in the event that"
-            " we run out of memory in the current page group.\n");
+            fprintf(stderr, "ERROR: smalloc: Failed to allocate %lu "
+                "bytes.\n", size);
 #endif
-        return NULL;
+            return NULL;
+        }
+
+        chksize = size + sizeof(struct _smalloc_chunk_t);
+        chk = (struct _smalloc_chunk_t*)pg->top;
+        chk->len = size;
+        chk->freed = 0;
+        chk->ptr = chk + sizeof(struct _smalloc_chunk_t);
+        chk->next = NULL;
+
+        pg->top += chksize;
+        pg->chunks = chk;
+
+        _pgroup_append(_info.pglist, pg);
     }
 
     mem = _pgroup_reserve(pg, size);
